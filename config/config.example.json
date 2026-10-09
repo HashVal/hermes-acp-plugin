@@ -1,0 +1,9 @@
+{
+  "allowed_users": ["ou_REPLACE_WITH_YOUR_FEISHU_OPEN_ID"],
+  "allow_groups": false,
+  "default_cwd": "/home/USER/devops",
+  "agents": {
+    "claude": {"mode": "default"},
+    "codex": {"mode": "workspace-write"}
+  }
+}

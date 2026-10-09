@@ -1,0 +1,1 @@
+{"name":"hermes-acp-adapters","private":true,"dependencies":{"@agentclientprotocol/claude-agent-acp":"0.88.0","@agentclientprotocol/codex-acp":"2.1.1"}}
