@@ -29,11 +29,13 @@ Tested with Hermes v0.19.0, `@agentclientprotocol/claude-agent-acp` 0.88.0,
 | `/agent status \| list \| cancel \| close` | Session control |
 | `/agent mode [ID]` | Show or set the permission mode |
 
-- One chat has one session. `/cc --cwd OTHER` or switching to `/codex` closes the old session.
+- Each main chat or topic has its own session. `/cc --cwd OTHER` or switching to
+  `/codex` closes the old session in that chat or topic.
 - `—cwd` (em dash from the Feishu keyboard) is accepted as `--cwd`.
 - Paths with spaces are not supported.
-- Send messages in the DM, not as Feishu thread replies: a thread has a different
-  Hermes session key, so it does not see the session.
+- In Feishu, start `/cc` or `/codex` inside the topic where you want to work.
+  Replies and approval cards stay in that topic. A topic has a different Hermes
+  session key, so it does not inherit the main chat's agent session or Hermes history.
 
 ## Install
 
@@ -88,4 +90,5 @@ See [docs/design.md](docs/design.md) for how it works and the known limits.
 ~/.hermes/hermes-agent/venv/bin/python -m pytest tests -q
 ```
 
-The unit tests do not start the adapters or the gateway.
+The unit tests do not start agent processes or the gateway. Feishu routing tests
+use the installed Hermes Feishu adapter with network calls replaced by test stubs.

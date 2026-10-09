@@ -24,6 +24,12 @@ One client in `bridge.py` drives both adapters.
    other than the bridge's.
 3. `/hermes <text>` returns `{"action": "rewrite"}`, so Hermes answers that one message.
 4. A turn that is still running blocks a new message; the user gets "still working".
+5. Feishu topic replies carry both `thread_id` and the inbound `message_id` as
+   `reply_to_message_id` metadata. If the inbound message ID is absent, use the
+   event's parent/reply message ID. The Feishu adapter uses that anchor to call
+   the reply API with `reply_in_thread=true`, including for approval cards.
+   A topic ID alone does not provide a message to reply to. Failed send results
+   are logged even when the adapter returns an error without raising an exception.
 
 ## Approvals
 
@@ -84,5 +90,7 @@ after an upgrade, run the tests and one real approval.
 - Replies are sent once at the end of a turn; tool progress is sent every
   `progress_interval` seconds. No streaming card.
 - No path restriction for `--cwd`, and no spaces in paths.
-- Thread replies in Feishu use a different session key and do not reach the session.
+- Feishu topics have separate session keys. Start an agent inside each topic;
+  the bridge does not copy agent sessions or Hermes conversation history from
+  the main chat into a topic.
 - Images and files in messages are not forwarded; only text.

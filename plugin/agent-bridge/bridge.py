@@ -45,14 +45,22 @@ Plain messages go to the open session until /agent close."""
 class _Chat:
     """Where to send replies for one session (refreshed on every inbound message)."""
 
-    def __init__(self, adapter, chat_id: str, thread_id: Optional[str]):
+    def __init__(self, adapter, chat_id: str, thread_id: Optional[str],
+                 reply_to_message_id: Optional[str] = None):
         self.adapter = adapter
         self.chat_id = chat_id
         self.metadata = {"thread_id": thread_id} if thread_id else None
+        if self.metadata is not None and reply_to_message_id:
+            # Feishu needs a message anchor for both replies and approval cards.
+            self.metadata["reply_to_message_id"] = reply_to_message_id
 
     async def say(self, text: str) -> None:
         try:
-            await self.adapter.send(self.chat_id, text, metadata=self.metadata)
+            result = await self.adapter.send(self.chat_id, text, metadata=self.metadata)
+            if not getattr(result, "success", True):
+                logger.error("agent-bridge: send to %s (thread %s) failed: %s",
+                             self.chat_id, (self.metadata or {}).get("thread_id"),
+                             getattr(result, "error", None) or "unknown send error")
         except Exception:
             logger.exception("agent-bridge: send to %s failed", self.chat_id)
 
@@ -469,7 +477,12 @@ def on_pre_gateway_dispatch(event=None, gateway=None, **_kw):
     if adapter is None:
         return None
     key = gateway._session_key_for_source(source)
-    chat = _Chat(adapter, source.chat_id, getattr(source, "thread_id", None))
+    thread_id = getattr(source, "thread_id", None)
+    reply_to_message_id = None
+    if thread_id and getattr(source.platform, "value", source.platform) == "feishu":
+        reply_to_message_id = (getattr(event, "message_id", None)
+                               or getattr(event, "reply_to_message_id", None))
+    chat = _Chat(adapter, source.chat_id, thread_id, reply_to_message_id)
     if _reaper is None or _reaper.done():
         _reaper = asyncio.get_running_loop().create_task(_reap_idle())
 
