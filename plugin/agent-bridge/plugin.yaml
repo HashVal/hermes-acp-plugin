@@ -1,0 +1,7 @@
+name: agent-bridge
+version: 0.1.0
+description: "Drive Claude Code and Codex sessions (via ACP adapters) from Hermes gateway chats such as Feishu. /cc and /codex start a session; plain messages in that chat then go to the agent until /agent close. Agent permission requests become gateway approval cards."
+author: local
+kind: standalone
+hooks:
+  - pre_gateway_dispatch
