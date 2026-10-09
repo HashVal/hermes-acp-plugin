@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 _store = SessionStore()
 _sessions: Dict[str, "AgentSession"] = {}
+# Reserve capacity before session startup or replacement can yield to another task.
+_starting: Dict[str, str] = {}
 _tasks: Set[asyncio.Task] = set()
 _reaper: Optional[asyncio.Task] = None
 
@@ -284,7 +286,9 @@ class AgentSession:
             ticker.cancel()
             self.busy = False
             self.last_used = time.monotonic()
-            _store.put(self.key, self.record())
+            # A closing turn must not recreate a closed or replaced session.
+            if _sessions.get(self.key) is self:
+                _store.put(self.key, self.record())
 
     async def _progress(self) -> None:
         interval = self.cfg["progress_interval"]
@@ -357,13 +361,31 @@ async def _close(key: str) -> bool:
 
 
 async def _send_to(sess: AgentSession, text: str) -> None:
+    if sess.key in _starting:
+        await sess.chat.say("This agent session is still starting. Wait, then resend your message.")
+        return
     if sess.busy:
         await sess.chat.say(f"{sess.label} is still working. Wait, or /agent cancel.")
         return
     await sess.prompt(text)
 
 
+def _codex_session_keys() -> Set[str]:
+    """Count each open session once, including saved and still-starting sessions."""
+    keys = {key for key, rec in _store.all().items() if rec.get("agent") == "codex"}
+    keys.update(key for key, sess in _sessions.items() if sess.agent == "codex")
+    keys.update(key for key, agent in _starting.items() if agent == "codex")
+    return keys
+
+
+def _codex_capacity(cfg) -> str:
+    return f"Codex sessions: {len(_codex_session_keys())}/{cfg['codex_limit']} (limit)."
+
+
 async def _start(key: str, agent: str, args: str, chat: _Chat, cfg) -> None:
+    if key in _starting:
+        await chat.say("This agent session is still starting. Wait, then retry.")
+        return
     cwd, prompt = _parse_start_args(args)
     sess = _get_session(key, cfg)
     if sess is not None and sess.agent == agent and cwd is None:
@@ -373,29 +395,42 @@ async def _start(key: str, agent: str, args: str, chat: _Chat, cfg) -> None:
         else:
             await chat.say(f"{sess.label} session is open in {sess.cwd}. Send a message.")
         return
-    if sess is not None:
-        if sess.busy:
-            await chat.say(f"{sess.label} is still working. /agent cancel or /agent close first.")
-            return
-        await _close(key)
+    if sess is not None and sess.busy:
+        await chat.say(f"{sess.label} is still working. /agent cancel or /agent close first.")
+        return
     cwd = cwd or cfg["default_cwd"]
     if not os.path.isdir(cwd):
         await chat.say(f"❌ Directory not found: {cwd}")
         return
-    sess = AgentSession(key, agent, cwd, cfg)
-    sess.chat = chat
-    _sessions[key] = sess
-    try:
-        await sess.ensure_started()
-    except Exception as exc:
-        logger.exception("agent-bridge: start %s failed", agent)
-        _sessions.pop(key, None)
-        _store.pop(key)
-        await sess.stop()
-        await chat.say(f"❌ Could not start {sess.label}: {exc}")
+    keys = _codex_session_keys()
+    if agent == "codex" and key not in keys and len(keys) >= cfg["codex_limit"]:
+        await chat.say(f"Codex session limit reached ({len(keys)}/{cfg['codex_limit']}). "
+                       "Close an existing Codex session with /agent close in its chat or topic, "
+                       "then retry. This request was not queued.")
         return
-    await chat.say(f"🟢 {sess.label} session started in {cwd} (mode: {sess.mode}).\n"
-                   "Plain messages now go to it. /agent close to end, /hermes <text> for Hermes.")
+    # The capacity check and reservation have no await between them.
+    _starting[key] = agent
+    try:
+        if sess is not None:
+            await _close(key)
+        sess = AgentSession(key, agent, cwd, cfg)
+        sess.chat = chat
+        _sessions[key] = sess
+        try:
+            await sess.ensure_started()
+        except (Exception, asyncio.CancelledError) as exc:
+            _sessions.pop(key, None)
+            _store.pop(key)
+            await sess.stop()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            logger.exception("agent-bridge: start %s failed", agent)
+            await chat.say(f"❌ Could not start {sess.label}: {exc}")
+            return
+        await chat.say(f"🟢 {sess.label} session started in {cwd} (mode: {sess.mode}).\n"
+                       "Plain messages now go to it. /agent close to end, /hermes <text> for Hermes.")
+    finally:
+        _starting.pop(key, None)
     if prompt:
         await _send_to(sess, prompt)
 
@@ -408,19 +443,25 @@ async def _agent_cmd(key: str, args: str, chat: _Chat, cfg) -> None:
         sess.chat = chat
     if sub in ("help", "-h", "--help"):
         await chat.say(_HELP)
+    elif key in _starting and sub not in ("status", "list"):
+        await chat.say("This agent session is still starting. Wait, then retry.")
     elif sub == "list":
         recs = _store.all()
         lines = [f"• {r['agent']} in {r['cwd']} (mode {r.get('mode')})"
                  f"{' — running' if k in _sessions and _sessions[k].running else ''}"
                  + (" ← this chat" if k == key else "")
                  for k, r in recs.items()]
-        await chat.say("Bridged sessions:\n" + "\n".join(lines) if lines else "No bridged sessions.")
+        listing = "Bridged sessions:\n" + "\n".join(lines) if lines else "No bridged sessions."
+        await chat.say(listing + "\n" + _codex_capacity(cfg))
     elif sess is None:
-        await chat.say("No agent session in this chat. Start one with /cc or /codex.\n\n" + _HELP)
+        await chat.say("No agent session in this chat. Start one with /cc or /codex.\n"
+                       + _codex_capacity(cfg) + "\n\n" + _HELP)
     elif sub == "status":
         state = "working" if sess.busy else ("running" if sess.running else "stopped (resumes on next message)")
+        if key in _starting:
+            state = "starting"
         await chat.say(f"{sess.label} session in {sess.cwd}\nmode: {sess.mode}\nstate: {state}\n"
-                       f"id: {sess.acp_session_id}")
+                       f"id: {sess.acp_session_id}\n" + _codex_capacity(cfg))
     elif sub == "cancel":
         await sess.cancel()
         await chat.say(f"Cancel sent to {sess.label}.")

@@ -18,6 +18,7 @@ DEFAULTS: Dict[str, Any] = {
     "allowed_users": [],
     # Group chats are off: other members could click the approval buttons.
     "allow_groups": False,
+    "codex_limit": 2,           # open Codex sessions, including idle/saved sessions
     "default_cwd": str(Path.home()),
     "adapters_dir": str(get_hermes_home() / "acp-adapters" / "node_modules" / ".bin"),
     "agents": {
@@ -48,4 +49,8 @@ def load_config() -> Dict[str, Any]:
     for name, agent in (user.pop("agents", None) or {}).items():
         cfg["agents"].setdefault(name, {}).update(agent)
     cfg.update(user)
+    if type(cfg["codex_limit"]) is not int or cfg["codex_limit"] < 1:
+        logger.warning("agent-bridge: invalid codex_limit; using default %s",
+                       DEFAULTS["codex_limit"])
+        cfg["codex_limit"] = DEFAULTS["codex_limit"]
     return cfg

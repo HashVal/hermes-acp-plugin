@@ -66,6 +66,7 @@ Defaults are in `plugin/agent-bridge/config.py`.
 |---|---|---|
 | `allowed_users` | `[]` | Platform user ids allowed to use the bridge. Empty = nobody. |
 | `allow_groups` | `false` | Allow group chats. Off: other members could click approval buttons. |
+| `codex_limit` | `2` | Maximum open Codex sessions across chats and topics; positive integer |
 | `default_cwd` | `$HOME` | Directory when `--cwd` is not given |
 | `agents.<name>.mode` | claude `default`, codex `workspace-write` | ACP mode set at session start |
 | `agents.<name>.command` | `claude-agent-acp` / `codex-acp` | Adapter binary (relative to `adapters_dir`) |
@@ -74,6 +75,23 @@ Defaults are in `plugin/agent-bridge/config.py`.
 | `idle_timeout` | `7200` | Seconds; stop an idle adapter process (the session resumes later) |
 | `progress_interval` | `20` | Seconds between "working…" messages |
 | `max_reply_chars` | `24000` | Longer replies are cut |
+
+Set `"codex_limit": 2` in the runtime `config.json` to allow two open Codex
+sessions. A third `/codex` session is rejected with a reply in its chat or topic;
+the request is not queued. `/agent status` and `/agent list` show the count and limit.
+
+This is a **session limit**, not a turn or API request limit. Idle sessions and
+saved sessions after an idle stop or gateway restart still count. Finishing a turn
+or using `/agent cancel` does not free a slot; use `/agent close` in that session's
+chat or topic. Existing sessions can continue or change directory at the limit.
+The limit does not apply to Claude sessions, Hermes's own requests, or separate
+Codex clients such as the desktop app.
+
+Limit changes apply to the next start request. Lowering the limit keeps existing
+sessions and blocks new ones until the count is below the limit. Invalid values
+(including zero, negatives, strings, and booleans) fall back to `2` with a warning.
+Other session settings, such as the agent environment, stay with the session's
+configuration snapshot until it is reopened.
 
 Modes:
 

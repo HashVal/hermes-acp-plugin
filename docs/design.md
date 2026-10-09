@@ -52,6 +52,22 @@ after an upgrade, run the tests and one real approval.
 
 ## Sessions and processes
 
+- `codex_limit` (default `2`) caps open Codex sessions across all chats and topics
+  in this gateway. Count the union of saved Codex session keys, in-memory Codex
+  sessions, and startup reservations. This includes idle sessions and sessions
+  whose adapter process has stopped. Claude sessions do not count.
+- Check capacity and reserve the session key before the first startup or
+  replacement await. Concurrent starts cannot take the same last slot. A rejected
+  start sends a capacity message and is not queued; an existing session in that
+  chat is preserved. Startup failure or cancellation releases the reservation.
+- Reusing a session or changing its directory does not take an extra slot.
+  `/agent close` frees the slot. Completed, failed, or cancelled turns do not.
+  A turn that finishes after close cannot recreate its saved session record.
+  The saved records preserve the count across gateway restarts and idle stops.
+- Read the limit from the current message's configuration. A lower limit does
+  not evict existing sessions, but blocks additional sessions. Status and list
+  replies show current capacity. This cap does not measure model API requests
+  and cannot enforce a provider limit shared with other clients.
 - One adapter process per open session. It starts on the first message and stops after
   `idle_timeout`, on `/agent close`, or when it crashes.
 - `sessions.json` keeps `{agent, cwd, acp_session_id, mode}` per Hermes session key.

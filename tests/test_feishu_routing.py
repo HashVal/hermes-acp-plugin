@@ -39,8 +39,10 @@ def feishu_bridge(ab, monkeypatch, tmp_path):
     monkeypatch.setattr(adapter, "_run_blocking", direct)
     conf = ab.config.load_config()
     conf["allowed_users"] = ["ou_test_me"]
+    conf["codex_limit"] = 3
     monkeypatch.setattr(ab.bridge, "load_config", lambda: conf)
     monkeypatch.setattr(ab.bridge, "_sessions", {})
+    monkeypatch.setattr(ab.bridge, "_starting", {})
     monkeypatch.setattr(ab.bridge, "_store", ab.store.SessionStore(tmp_path / "sessions.json"))
     monkeypatch.setattr(ab.bridge, "_reaper", SimpleNamespace(done=lambda: False))
     monkeypatch.setattr(ab.bridge.AgentSession, "ensure_started", AsyncMock())
@@ -59,9 +61,9 @@ def feishu_bridge(ab, monkeypatch, tmp_path):
         assert result["action"] == "skip"
         await asyncio.gather(*tasks)
         tasks.clear()
-        return ab.bridge._sessions[build_session_key(source)]
+        return ab.bridge._sessions.get(build_session_key(source))
 
-    return SimpleNamespace(adapter=adapter, requests=requests, dispatch=dispatch)
+    return SimpleNamespace(adapter=adapter, requests=requests, dispatch=dispatch, cfg=conf)
 
 
 @pytest.mark.parametrize("message_id,parent_id,expected", [
@@ -126,3 +128,20 @@ def test_failed_send_result_is_logged(ab, caplog):
     asyncio.run(chat.say("private reply text"))
     assert "99992402" in caplog.text
     assert "private reply text" not in caplog.text
+
+
+def test_capacity_rejection_stays_in_requesting_topic(feishu_bridge):
+    feishu_bridge.cfg["codex_limit"] = 2
+
+    async def exercise():
+        await feishu_bridge.dispatch("omt_first", "om_first")
+        await feishu_bridge.dispatch("omt_second", "om_second")
+        assert await feishu_bridge.dispatch("omt_third", "om_third") is None
+
+    asyncio.run(exercise())
+    assert len(feishu_bridge.requests) == 3
+    method, request = feishu_bridge.requests[-1]
+    assert method == "reply"
+    assert request.message_id == "om_third"
+    assert request.request_body.reply_in_thread is True
+    assert "session limit reached (2/2)" in request.request_body.content

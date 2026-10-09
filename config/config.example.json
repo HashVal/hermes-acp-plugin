@@ -1,6 +1,7 @@
 {
   "allowed_users": ["ou_REPLACE_WITH_YOUR_FEISHU_OPEN_ID"],
   "allow_groups": false,
+  "codex_limit": 2,
   "default_cwd": "/home/USER/devops",
   "agents": {
     "claude": {"mode": "default"},
